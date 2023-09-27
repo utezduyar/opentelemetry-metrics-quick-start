@@ -1,14 +1,23 @@
 package main
 
 import (
+	"context"
+	"encoding/json"
 	"fmt"
 	"log"
 	"math/rand"
 	"net/http"
+	"os"
 	"time"
+
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/exporters/stdout/stdoutmetric"
+	metricsdk "go.opentelemetry.io/otel/sdk/metric"
 
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/metric"
+	"go.opentelemetry.io/otel/sdk/resource"
+	semconv "go.opentelemetry.io/otel/semconv/v1.17.0"
 )
 
 func RandInt(lower, upper int) int {
@@ -17,6 +26,51 @@ func RandInt(lower, upper int) int {
 }
 
 func main() {
+
+	// ---------------------------------------------------------------------
+	// SDK Layer
+	// ---------------------------------------------------------------------
+
+	// Annotate the data with resource name
+	res, err := resource.Merge(resource.Default(), resource.NewWithAttributes(
+		resource.Default().SchemaURL(),
+		semconv.ServiceNameKey.String("ExampleApplication"),
+		attribute.String("env", "dev"),
+	))
+
+	if err != nil {
+		fmt.Println("Failed to create and merge resources")
+		panic(err)
+	}
+
+	// Print with a JSON encoder that indents with two spaces.
+	enc := json.NewEncoder(os.Stdout)
+	enc.SetIndent("", "  ")
+
+	exporter, err := stdoutmetric.New(
+		stdoutmetric.WithEncoder(enc),
+		stdoutmetric.WithoutTimestamps(),
+	)
+	if err != nil {
+		panic(err)
+	}
+
+	// Read data every 5 seconds.
+	reader := metricsdk.NewPeriodicReader(exporter,
+		metricsdk.WithInterval(5*time.Second))
+
+	meterProvider := metricsdk.NewMeterProvider(
+		metricsdk.WithReader(reader),
+		metricsdk.WithResource(res),
+	)
+	otel.SetMeterProvider(meterProvider)
+	defer func() {
+		// Meter provider can also force a reading with shutdown and forceflush
+		err := meterProvider.Shutdown(context.Background())
+		if err != nil {
+			panic(err)
+		}
+	}()
 
 	// ---------------------------------------------------------------------
 	// API Layer
