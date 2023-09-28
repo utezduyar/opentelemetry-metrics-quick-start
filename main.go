@@ -1,20 +1,17 @@
 package main
 
 import (
-	"bufio"
 	"context"
-	"encoding/json"
 	"fmt"
 	"log"
 	"math/rand"
 	"net/http"
-	"os"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"go.opentelemetry.io/otel/attribute"
-	"go.opentelemetry.io/otel/exporters/stdout/stdoutmetric"
+	"go.opentelemetry.io/otel/exporters/prometheus"
 	metricsdk "go.opentelemetry.io/otel/sdk/metric"
-	"go.opentelemetry.io/otel/sdk/metric/metricdata"
 
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/metric"
@@ -45,20 +42,14 @@ func main() {
 		panic(err)
 	}
 
-	// Print with a JSON encoder that indents with two spaces.
-	enc := json.NewEncoder(os.Stdout)
-	enc.SetIndent("", "  ")
+	// The exporter embeds a default OpenTelemetry Reader and
+	// implements prometheus.Collector, allowing it to be used as
+	// both a Reader and Collector.
+	reader, err := prometheus.New()
 
-	exporter, err := stdoutmetric.New(
-		stdoutmetric.WithEncoder(enc),
-		stdoutmetric.WithoutTimestamps(),
-	)
 	if err != nil {
 		panic(err)
 	}
-
-	// With manual reader, we are in control on when to read.
-	reader := metricsdk.NewManualReader()
 
 	meterProvider := metricsdk.NewMeterProvider(
 		metricsdk.WithReader(reader),
@@ -133,16 +124,14 @@ func main() {
 		panic(err)
 	}
 
-	// Separate routine to invoke the manual reader
+	// Start the prometheus HTTP server and pass the exporter Collector to it
 	go func() {
-		for {
-			// Every time enter is pressed, scrape the data
-			consolereader := bufio.NewReader(os.Stdin)
-			consolereader.ReadString('\n')
-
-			collectedMetrics := &metricdata.ResourceMetrics{}
-			reader.Collect(context.TODO(), collectedMetrics)
-			exporter.Export(context.TODO(), collectedMetrics)
+		log.Printf("Serving metrics at localhost:8888/metrics")
+		http.Handle("/metrics", promhttp.Handler())
+		err := http.ListenAndServe("localhost:8888", nil)
+		if err != nil {
+			fmt.Printf("error serving http: %v", err)
+			return
 		}
 	}()
 
