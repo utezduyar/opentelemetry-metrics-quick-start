@@ -8,9 +8,8 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"go.opentelemetry.io/otel/attribute"
-	"go.opentelemetry.io/otel/exporters/prometheus"
+	"go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetrichttp"
 	metricsdk "go.opentelemetry.io/otel/sdk/metric"
 
 	"go.opentelemetry.io/otel"
@@ -42,14 +41,36 @@ func main() {
 		panic(err)
 	}
 
-	// The exporter embeds a default OpenTelemetry Reader and
-	// implements prometheus.Collector, allowing it to be used as
-	// both a Reader and Collector.
-	reader, err := prometheus.New()
+	exporter, err := otlpmetrichttp.New(
+		context.Background(),
+		otlpmetrichttp.WithInsecure(),
+		// WithTimeout sets the max amount of time the Exporter will attempt an
+		// export.
+		otlpmetrichttp.WithTimeout(7*time.Second),
+		otlpmetrichttp.WithRetry(otlpmetrichttp.RetryConfig{
+			// Enabled indicates whether to not retry sending batches in case
+			// of export failure.
+			Enabled: true,
+			// InitialInterval the time to wait after the first failure before
+			// retrying.
+			InitialInterval: 1 * time.Second,
+			// MaxInterval is the upper bound on backoff interval. Once this
+			// value is reached the delay between consecutive retries will
+			// always be `MaxInterval`.
+			MaxInterval: 10 * time.Second,
+			// MaxElapsedTime is the maximum amount of time (including retries)
+			// spent trying to send a request/batch. Once this value is
+			// reached, the data is discarded.
+			MaxElapsedTime: 240 * time.Second,
+		}),
+	)
 
 	if err != nil {
 		panic(err)
 	}
+
+	reader := metricsdk.NewPeriodicReader(exporter,
+		metricsdk.WithInterval(5*time.Second))
 
 	meterProvider := metricsdk.NewMeterProvider(
 		metricsdk.WithReader(reader),
@@ -123,17 +144,6 @@ func main() {
 		fmt.Println("Failed to register callback")
 		panic(err)
 	}
-
-	// Start the prometheus HTTP server and pass the exporter Collector to it
-	go func() {
-		log.Printf("Serving metrics at localhost:8888/metrics")
-		http.Handle("/metrics", promhttp.Handler())
-		err := http.ListenAndServe("localhost:8888", nil)
-		if err != nil {
-			fmt.Printf("error serving http: %v", err)
-			return
-		}
-	}()
 
 	log.Printf("API endpoint at localhost:8080/")
 	http.HandleFunc("/", func(w http.ResponseWriter, req *http.Request) {
