@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -13,6 +14,7 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/exporters/stdout/stdoutmetric"
 	metricsdk "go.opentelemetry.io/otel/sdk/metric"
+	"go.opentelemetry.io/otel/sdk/metric/metricdata"
 
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/metric"
@@ -55,9 +57,8 @@ func main() {
 		panic(err)
 	}
 
-	// Read data every 5 seconds.
-	reader := metricsdk.NewPeriodicReader(exporter,
-		metricsdk.WithInterval(5*time.Second))
+	// With manual reader, we are in control on when to read.
+	reader := metricsdk.NewManualReader()
 
 	meterProvider := metricsdk.NewMeterProvider(
 		metricsdk.WithReader(reader),
@@ -101,6 +102,49 @@ func main() {
 		fmt.Println("Failed to register instrument")
 		panic(err)
 	}
+
+	// Counter (async)
+	numGC := 0
+	gcCount, err := meter.Int64ObservableCounter("runtime.gc.count")
+
+	if err != nil {
+		fmt.Println("Failed to register instrument")
+		panic(err)
+	}
+
+	_, err = meter.RegisterCallback(
+		// Callback is called when the reader scrapes data
+		func(_ context.Context, o metric.Observer) error {
+
+			numGC += RandInt(0, 4)
+			// Async counters are cumulative temporality in other words
+			// the absolute value must be reported not the delta (sync counters)
+			o.ObserveInt64(gcCount, int64(numGC))
+
+			fmt.Printf("Number of garbage collections: %d\n", numGC)
+
+			return nil
+		},
+		gcCount,
+	)
+
+	if err != nil {
+		fmt.Println("Failed to register callback")
+		panic(err)
+	}
+
+	// Separate routine to invoke the manual reader
+	go func() {
+		for {
+			// Every time enter is pressed, scrape the data
+			consolereader := bufio.NewReader(os.Stdin)
+			consolereader.ReadString('\n')
+
+			collectedMetrics := &metricdata.ResourceMetrics{}
+			reader.Collect(context.TODO(), collectedMetrics)
+			exporter.Export(context.TODO(), collectedMetrics)
+		}
+	}()
 
 	log.Printf("API endpoint at localhost:8080/")
 	http.HandleFunc("/", func(w http.ResponseWriter, req *http.Request) {
