@@ -10,6 +10,7 @@ import (
 
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetrichttp"
+	"go.opentelemetry.io/otel/sdk/instrumentation"
 	metricsdk "go.opentelemetry.io/otel/sdk/metric"
 
 	"go.opentelemetry.io/otel"
@@ -75,6 +76,32 @@ func main() {
 	meterProvider := metricsdk.NewMeterProvider(
 		metricsdk.WithReader(reader),
 		metricsdk.WithResource(res),
+		metricsdk.WithView(metricsdk.NewView(
+			// From any instrumentation library, with the name
+			// "request.duration" use these buckets.
+			metricsdk.Instrument{Name: "request.duration"},
+			metricsdk.Stream{
+				Aggregation: metricsdk.AggregationExplicitBucketHistogram{
+					Boundaries: []float64{0, 2, 4, 6, 8, 10},
+				},
+			},
+		)),
+		metricsdk.WithView(metricsdk.NewView(
+			// From any instrumentation library, with the name
+			// starts with "request.count", drop.
+			metricsdk.Instrument{Name: "request.count*"},
+			metricsdk.Stream{Aggregation: metricsdk.AggregationDrop{}},
+		)),
+		metricsdk.WithView(metricsdk.NewView(
+			// Create a view that renames the "latency" instrument from the v0.34.0
+			// version of the "http" instrumentation library as "request.latency".
+			metricsdk.Instrument{Name: "messaging.requests.queue",
+				Scope: instrumentation.Scope{
+					Name:    "io.example.opentelemetry.runtime",
+					Version: "v1.1.1",
+				}},
+			metricsdk.Stream{Name: "messaging.inbound.queue"},
+		)),
 	)
 	otel.SetMeterProvider(meterProvider)
 	defer func() {
