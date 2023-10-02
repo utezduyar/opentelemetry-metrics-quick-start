@@ -145,6 +145,52 @@ func main() {
 		panic(err)
 	}
 
+	// Up/Down Counter (async)
+	requestqueue := 0
+	_, err = meter.Int64ObservableUpDownCounter(
+		"messaging.requests.queue",
+		// Callback is part of the instrument creation. Or use RegisterCallback() on the meter
+		metric.WithInt64Callback(func(_ context.Context, obsrv metric.Int64Observer) error {
+
+			requestqueue += RandInt(-10, 10)
+			if requestqueue < 0 {
+				requestqueue = 0
+			}
+
+			// Async up/down counters are cumulative temporality in other words
+			// the absolute value must be reported not the delta (sync counters)
+			obsrv.Observe(int64(requestqueue))
+
+			fmt.Printf("Number of request in the queue: %d\n", requestqueue)
+
+			return nil
+		}),
+	)
+	if err != nil {
+		fmt.Println("failed to register instrument")
+		panic(err)
+	}
+
+	// Gauge (Always async)
+	temperature := 0
+	_, err = meter.Int64ObservableGauge(
+		"room.temperature",
+		metric.WithInt64Callback(func(_ context.Context, obsrv metric.Int64Observer) error {
+
+			temperature += RandInt(-1, 2)
+
+			obsrv.Observe(int64(temperature))
+
+			fmt.Printf("Room temperature: %d\n", temperature)
+
+			return nil
+		}),
+	)
+	if err != nil {
+		fmt.Println("failed to register instrument")
+		panic(err)
+	}
+
 	log.Printf("API endpoint at localhost:8080/")
 	http.HandleFunc("/", func(w http.ResponseWriter, req *http.Request) {
 
