@@ -12,6 +12,7 @@ import (
 	"go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetrichttp"
 	"go.opentelemetry.io/otel/sdk/instrumentation"
 	metricsdk "go.opentelemetry.io/otel/sdk/metric"
+	"go.opentelemetry.io/otel/sdk/metric/metricdata"
 
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/metric"
@@ -22,6 +23,22 @@ import (
 func RandInt(lower, upper int) int {
 	rng := upper - lower
 	return rand.Intn(rng) + lower
+}
+
+func TemporalitySelector(kind metricsdk.InstrumentKind) metricdata.Temporality {
+
+	// Change the temporality based on the instrument type
+	switch kind {
+	case metricsdk.InstrumentKindCounter,
+		metricsdk.InstrumentKindHistogram,
+		metricsdk.InstrumentKindObservableGauge,
+		metricsdk.InstrumentKindObservableCounter:
+		return metricdata.DeltaTemporality
+	case metricsdk.InstrumentKindUpDownCounter,
+		metricsdk.InstrumentKindObservableUpDownCounter:
+		return metricdata.CumulativeTemporality
+	}
+	panic("unknown instrument kind")
 }
 
 func main() {
@@ -44,6 +61,7 @@ func main() {
 
 	exporter, err := otlpmetrichttp.New(
 		context.Background(),
+		otlpmetrichttp.WithTemporalitySelector(TemporalitySelector),
 		otlpmetrichttp.WithInsecure(),
 		// WithTimeout sets the max amount of time the Exporter will attempt an
 		// export.
